@@ -189,6 +189,34 @@ app.post('/api/surah', (req, res) => {
   });
 });
 
+
+
+// ✅ Return all available hadith keywords for autocomplete
+app.get('/api/hadith-keywords', (req, res) => {
+  const keywords = [...new Set(hadithData.map(h => h.keyword).filter(Boolean))];
+  res.json(keywords);
+});
+
+// ✅ Return hadiths by keyword
+app.post('/api/hadith', (req, res) => {
+  const { keyword } = req.body;
+
+  if (!keyword) {
+    return res.status(400).json({ message: 'Keyword is required.' });
+  }
+
+  const results = hadithData.filter(h =>
+    h.hadithEnglish?.toLowerCase().includes(keyword.toLowerCase()) ||
+    h.englishNarrator?.toLowerCase().includes(keyword.toLowerCase())
+  );
+
+  if (results.length === 0) {
+    return res.status(404).json({ message: 'No hadiths found.' });
+  }
+
+  res.json({ results });
+});
+
 // 🚀 Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
