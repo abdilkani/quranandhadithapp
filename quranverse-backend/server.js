@@ -1,35 +1,7 @@
-// const express = require('express');
-// const mongoose = require('mongoose');
-// const dotenv = require('dotenv');
-// const cors = require('cors');
-
-// dotenv.config();
-// const app = express();
-
-// app.use(cors());
-// app.use(express.json());
-
-
-
-
-// mongoose.connect(process.env.MONGO_URI)
-//   .then(() => console.log("✅ MongoDB connected"))
-//   .catch(err => console.error("❌ MongoDB error:", err));
-
-// const verseRoutes = require('./routes/verseRoutes');
-// app.use('/api/verses', verseRoutes);
-
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => {
-//   console.log(`🚀 Server running on http://localhost:${PORT}`);
-// });
-
-
-// Localhost no data base
-const express = require("express");
-const cors = require("cors");
-
-
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+require('dotenv').config();
 
 const app = express();
 const PORT = 3000;
@@ -37,39 +9,187 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
-// Example verses
-app.get('/verses/:feeling', (req, res) => {
-  const feeling = req.params.feeling.toLowerCase();
+let quranData;
+let quranDataArabic;
+let hadithData = [];
 
-  const verses = {
-    stress: {
-      chapter: '94',
-      verse: '6',
-      text: 'Indeed, with hardship comes ease.'
-    },
-    sadness: {
-      chapter: '94',
-      verse: '5',
-      text: 'So verily, with the hardship, there is relief.'
-    },
-    fear: {
-      chapter: '20',
-      verse: '46',
-      text: 'Do not fear, I am with you all the time.'
+try {
+  const rawQuran = fs.readFileSync('./data/quran.json', 'utf-8');
+  const rawQuranAr = fs.readFileSync('./data/quranDataArabic.json', 'utf-8');
+  const rawHadith = fs.readFileSync('./data/hadiths.json', 'utf-8');
+
+  quranData = JSON.parse(rawQuran);
+  quranDataArabic = JSON.parse(rawQuranAr);
+  const parsedHadith = JSON.parse(rawHadith);
+  hadithData = parsedHadith.hadiths?.data || [];
+
+  console.log('✅ Quran and Hadith data loaded.');
+} catch (err) {
+  console.error('❌ Failed to load data:', err.message);
+  process.exit(1);
+}
+
+// Emotion keyword mapping
+const keywordMap = {
+  stress: ['stress', 'pressure', 'tense', 'tired'],
+  sadness: ['sad', 'grief', 'depressed','heartbroken'],
+  anxiety: ['anxious', 'worry', 'nervous'],
+  hope: ['hope', 'trust', 'faith'],
+  peace: ['peace', 'calm', 'serene'],
+  joy: ['happy', 'joy', 'delighted'],
+  love: ['love', 'affection', 'compassion'],
+  anger: ['angry', 'rage', 'annoyed'],
+  shame: ['shame', 'guilt', 'embarrassed'],
+  confusion: ['confused', 'lost', 'uncertain'],
+  gratitude: ['grateful', 'thankful'],
+  courage: ['brave', 'strong', 'fearless'],
+  sickness: ['pain', 'sick', 'illness', 'anxious'],
+  life: ['life', 'living', 'existence', 'healthy', 'success', 'fail']
+};
+
+function getRelevantKeywords(input) {
+  const found = [];
+  for (const group of Object.values(keywordMap)) {
+    for (const word of group) {
+      if (input.toLowerCase().includes(word)) {
+        found.push(word);
+      }
     }
-    // Add more as needed
+  }
+  return found;
+}
+
+function findBestQuranMatch(keywords) {
+  const results = [];
+
+  quranData.data.surahs.forEach((surah, surahIndex) => {
+    const arabicSurah = quranDataArabic.data.surahs[surahIndex];
+    surah.ayahs.forEach((ayah, i) => {
+      const matches = keywords.filter(kw =>
+        ayah.text.toLowerCase().includes(kw)
+      );
+      if (matches.length > 0) {
+        results.push({
+          surah: surah.englishName,
+          surahArabic: arabicSurah.name,
+          verse: ayah.numberInSurah,
+          english: ayah.text,
+          arabic: arabicSurah.ayahs[i].text,
+          matches: matches.length
+        });
+      }
+    });
+  });
+
+  results.sort((a, b) => b.matches - a.matches);
+  return results[0] || null;
+}
+
+function findBestHadithMatchLocally(keyword) {
+  const matches = hadithData.filter(h =>
+    h.hadithEnglish?.toLowerCase().includes(keyword.toLowerCase()) ||
+    h.englishNarrator?.toLowerCase().includes(keyword.toLowerCase())
+  );
+
+  if (matches.length === 0) return null;
+
+  const best = matches[0];
+  return {
+    hadithEnglish: best.hadithEnglish,
+    hadithArabic: best.hadithArabic || '',
+    book: 'Unknown Book',
+    narrator: best.englishNarrator || 'Narrator unknown',
+    reference: best.hadithNumber || 'N/A'
   };
+}
 
-  const result = verses[feeling];
+// 🧠 Therapy endpoint
+app.post('/api/therapy', async (req, res) => {
+  const userInput = req.body.input;
+  console.log("🟢 Received input:", userInput);
 
-  if (result) {
-    res.json(result);
-  } else {
-    res.status(404).json({ message: 'Verse not found for that feeling.' });
+  if (!userInput || typeof userInput !== 'string') {
+    return res.status(400).json({ message: 'Input must be a string.' });
+  }
+
+  const keywords = getRelevantKeywords(userInput);
+  if (keywords.length === 0) {
+    return res.status(404).json({ message: 'No matching keywords found.' });
+  }
+
+  const quranMatch = findBestQuranMatch(keywords);
+  const hadithMatch = findBestHadithMatchLocally(keywords[0]);
+
+  res.json({ quranMatch, hadithMatch });
+});
+
+// 📖 Random verse endpoint
+app.get('/api/verses/random', (req, res) => {
+  try {
+    const surahs = quranData.data.surahs;
+    const arabicSurahs = quranDataArabic.data.surahs;
+
+    const surahIndex = Math.floor(Math.random() * surahs.length);
+    const surah = surahs[surahIndex];
+    const arabicSurah = arabicSurahs[surahIndex];
+
+    const ayahIndex = Math.floor(Math.random() * surah.ayahs.length);
+    const ayah = surah.ayahs[ayahIndex];
+    const arabicAyah = arabicSurah.ayahs[ayahIndex];
+
+    res.json({
+      chapter: surah.englishName,
+      verse: ayah.numberInSurah,
+      text: `${ayah.text} / ${arabicAyah.text}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch verse" });
   }
 });
 
+// ✅ Surah names list (for auto-complete)
+app.get('/api/surah-names', (req, res) => {
+  const surahNames = quranData.data.surahs.map((surah) => ({
+    english: surah.englishName,
+    arabic: surah.name,
+  }));
+  res.json(surahNames);
+});
 
+// ✅ Full surah by English name
+app.post('/api/surah', (req, res) => {
+  const { name } = req.body;
+
+  if (!name) {
+    return res.status(400).json({ message: 'Surah name is required.' });
+  }
+
+  const index = quranData.data.surahs.findIndex(
+    (surah) => surah.englishName.toLowerCase() === name.toLowerCase()
+  );
+
+  if (index === -1) {
+    return res.status(404).json({ message: 'Surah not found.' });
+  }
+
+  const englishSurah = quranData.data.surahs[index];
+  const arabicSurah = quranDataArabic.data.surahs[index];
+
+  const verses = englishSurah.ayahs.map((ayah, i) => ({
+    numberInSurah: ayah.numberInSurah,
+    arabicText: arabicSurah.ayahs[i].text,
+    englishText: ayah.text,
+  }));
+
+  res.json({
+    surahNameEnglish: englishSurah.englishName,
+    surahNameArabic: arabicSurah.name,
+    revelationType: englishSurah.revelationType,
+    verses,
+  });
+});
+
+// 🚀 Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
